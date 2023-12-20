@@ -4,7 +4,6 @@
 # date: 2023-12-12
 # version: 1.0
 
-import numpy as np
 import torch
 import torch.nn as nn
 # import kernel as kernel
@@ -18,19 +17,20 @@ import matplotlib.pyplot as plt
 
 # TODO: this codes needs to be improved for speed and memory usage
 
-def find_matrix_row_overlap_and_indices(x_low, x_high):
+def find_subsets_and_indexes(x_low, x_high):
     # find the overlap set
     flat_x_low = x_low.flatten()
     flat_x_high = x_high.flatten()
-    overlap_set, overlap_indices_low, overlap_indices_high = np.intersect1d(flat_x_low, flat_x_high, return_indices=True)
-    overlap_set =torch.tensor(overlap_set.reshape(-1,1)).float()
-    return overlap_set, overlap_indices_low, overlap_indices_high
+    subset_indexes_low = torch.nonzero(torch.isin(flat_x_low, flat_x_high), as_tuple=True)[0]
+    subset_indexes_high = torch.nonzero(torch.isin(flat_x_high, flat_x_low), as_tuple=True)[0]
+    subset_x = flat_x_low[subset_indexes_low].reshape(-1,1)
+    return subset_x, subset_indexes_low, subset_indexes_high
 
     
-class autoRegression(nn.Module):
+class autoRegression_twofidelity(nn.Module):
     # initialize the model
     def __init__(self,rho_init=1.0):
-        super(autoRegression, self).__init__()
+        super().__init__()
         
         # create the model
         kernel1 = kernel.SumKernel(kernel.LinearKernel(1), kernel.MaternKernel(1))
@@ -54,7 +54,7 @@ class autoRegression(nn.Module):
     
 # define the forward pass
 # TODO: move train outside the model
-def train_AR(ARmodel, x_train, y_train,max_iter=1000,lr_init=1e-1):
+def train_AR_twofidelity(ARmodel, x_train, y_train,max_iter=1000,lr_init=1e-1):
     # get the data
     x_low = x_train[0]
     y_low = y_train[0]
@@ -71,15 +71,15 @@ def train_AR(ARmodel, x_train, y_train,max_iter=1000,lr_init=1e-1):
         print('iter', i, 'nll:{:.5f}'.format(loss.item()))
     
     # get the high fidelity part that is subset of the low fidelity part
-    overlap_set, overlap_indices_low, overlap_indices_high = find_matrix_row_overlap_and_indices(x_low, x_high)
+    subset_x, subset_indexes_low, subset_indexes_high = find_subsets_and_indexes(x_low, x_high)
     
     # train the Residual_GP
-    optimizer_res = torch.optim.Adam(ARmodel.Residual_GP.parameters(), lr=lr_init)
+    optimizer_res = torch.optim.Adam(ARmodel.parameters(), lr=lr_init)
 
     for i in range(max_iter):
         optimizer_res.zero_grad()
-        y_residual = y_high[overlap_indices_high] - ARmodel.rho * y_low[overlap_indices_low]
-        loss = -ARmodel.Residual_GP.log_likelihood(overlap_set,y_residual)
+        y_residual = y_high[subset_indexes_high] - ARmodel.rho * y_low[subset_indexes_low]
+        loss = -ARmodel.Residual_GP.log_likelihood(subset_x,y_residual)
         loss.backward()
         optimizer_res.step()
         print('iter', i, 'nll:{:.5f}'.format(loss.item()))
@@ -104,9 +104,9 @@ if __name__ == "__main__":
     x_train = [x_low, x_high]
     y_train = [y_low, y_high]
 
-    AR = autoRegression(rho_init=1.0)
+    AR = autoRegression_twofidelity(rho_init=1.0)
     print("rho_init:", AR.rho.item())
-    train_AR(AR, x_train, y_train, max_iter=200, lr_init=1e-2)
+    train_AR_twofidelity(AR, x_train, y_train, max_iter=200, lr_init=1e-2)
     ypred, ypred_var = AR(x_test)
     print("rho:", AR.rho.item())
     plt.figure()
